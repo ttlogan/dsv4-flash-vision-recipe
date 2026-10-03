@@ -28,6 +28,7 @@ Internal IPs/hostnames are replaced with placeholders; no secrets are included.
 - **`orcarouter/DeepSeek-V4-Flash-Vision-Uncensored`** — DeepSeek V4 Flash with
   vision, uncensored/abliterated. A strict superset of the text-only abliterated
   release (vision tower included), so it replaces the smaller text-only variant.
+  **HF repo:** [https://huggingface.co/orcarouter/DeepSeek-V4-Flash-Vision-Uncensored](https://huggingface.co/orcarouter/DeepSeek-V4-Flash-Vision-Uncensored)
 - **Served name** (API `id`) = the model id above.
 - Loaded with **`--load-format b12x`** (the B12X-optimized kernel path), not
   `instanttensor` (PyPI `instanttensor` lacks `_determine_buffer_size` → fails).
