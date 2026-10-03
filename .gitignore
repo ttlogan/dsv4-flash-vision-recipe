@@ -1,0 +1,10 @@
+# launcher .env (contains HF_TOKEN / cluster config) — never commit
+.env
+*.env
+!.env.example
+
+# local scratch
+*.bak
+*.bak-*
+__pycache__/
+*.pyc
