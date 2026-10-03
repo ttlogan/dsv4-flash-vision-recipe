@@ -1,10 +1,25 @@
-# launcher .env (contains HF_TOKEN / cluster config) — never commit
+# Secrets / sensitive config — NEVER commit these.
+# Any local env/auth file is excluded; only *.example templates are allowed.
 .env
-*.env
+.env.*
 !.env.example
+**/.env
+**/.env.*
+!**/.env.example
+*.secret
+*.token
+*.key
+secrets/
+credentials/
+.hf_token
+.github_token
+.hftoken
 
-# local scratch
+# Local scratch / build artifacts
 *.bak
 *.bak-*
 __pycache__/
 *.pyc
+*.pyo
+.pytest_cache/
+node_modules/
