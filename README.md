@@ -16,7 +16,8 @@ Internal IPs/hostnames are replaced with placeholders; no secrets are included.
 | Path | What it is | Source |
 |---|---|---|
 | `recipes/orcarouter-eugr-1m.yaml` | The **tuned recipe**: 1M ctx, TP=2, b12x, T3 (max-num-seqs 4, max-num-batched-tokens 8192), dspark speculative 6, fp8 KV | **Own work** (tuned from the friend's recipe) |
-| `mods/busy-loop-fix/run.sh` | Apply-on-launch **thermal fix**: `busy_loop_s` 1 → 0.002 in vLLM `shm_broadcast.py` (CPU spin-wait fix) | **Own work** |
+| `mods/busy-loop-fix/` | Apply-on-launch **thermal fix**: `busy_loop_s` 1 → 0.002 in vLLM `shm_broadcast.py` (CPU spin-wait fix). See [`README`](mods/busy-loop-fix/README.md) | **Own work** |
+| `host-cpu-thermal/` | **Host-level** thermal fix: `schedutil` governor + cap X925 P-cores to 2.8GHz (systemd, persists across boot) | **Own work** |
 | `scripts/default_model_vllm.sh` | **Boot/swaap launcher**: idempotently ensure the default model is serving, refresh `/etc/motd`, `--swap` between models | **Own work** |
 | `launcher/run-recipe.py` | Launcher that turns a YAML recipe into a 2-node container launch | Third-party (see Attribution) |
 | `launcher/launch-cluster.sh` | Low-level cluster orchestration (container create, mod apply, RAFT/NCCL) | Third-party (see Attribution) |
@@ -86,6 +87,26 @@ busy_loop_s: float = 1,  ->  busy_loop_s: float = 0.002,
 **Measured effect:** vLLM idle CPU from ~57-79% → **4%**; board (acpitz) temp from
 ~85°C → **~51°C**; GPU from ~70°C → **~48°C**. Use 0.002, not 0 — 0 forces
 idle-poll/wakeups and can raise CPU.
+
+### Host-level: governor + performance-core cap (`host-cpu-thermal/`)
+
+The `busy_loop_s` mod fixes the container spin-wait, but under sustained TP=2
+decode the 10 Cortex-X925 P-cores still boost to 3.9GHz and get pinned by the
+IPC/NCCL work, pushing the SoC ACPI zones (0/5) to ~90-92°C. This is a **host**
+fix (not a container mod) and persists across reboots as a systemd unit.
+
+- **Governor:** `performance` → `schedutil` (all 20 cores; idle cores drop to
+  ~338MHz instead of sitting at max).
+- **Cap:** the 10 X925 P-cores (CPUs 5-9, 15-19) to **2.8GHz** (the same as the
+  A725 efficiency cores). This is the single biggest lever.
+- **Measured effect (community, dual-GB10 TP2):** SoC −9°C, P-core cluster −14°C,
+  GPU −1.7°C. Single-stream token rate unchanged; 8 concurrent streams ≈ −5%.
+- `nvidia-smi -pl` is a **NO-OP** on the GB10 ("not supported in current scope") —
+  do not use a power-limit service.
+
+See [`host-cpu-thermal/README.md`](host-cpu-thermal/README.md) for the install,
+immediate-apply, verify, and revert commands. Files: `cpu-governor.service`
+(systemd unit) + `gx10-cpu-cap.sh` (caps the X925 cores, idempotent).
 
 ---
 
