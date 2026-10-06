@@ -1,0 +1,18 @@
+[Unit]
+Description=GX10 thermal safety watchdog (clean poweroff at 95C SoC zone)
+After=multi-user.target
+
+[Service]
+Type=simple
+Environment=THRESHOLD=95000
+Environment=CONSECUTIVE=3
+Environment=INTERVAL=30
+# Set PEER_HOST to the other cluster rank so it's powered off first on a trip.
+# Leave unset to only power off this node.
+Environment=PEER_HOST=
+ExecStart=/usr/local/sbin/gx10-thermal-watch.sh
+Restart=always
+RestartSec=15
+
+[Install]
+WantedBy=multi-user.target

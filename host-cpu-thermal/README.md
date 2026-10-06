@@ -55,3 +55,46 @@ sudo cpupower frequency-set -g performance
 - `nvidia-smi -pl` is a NO-OP on the GB10 ("not supported in current scope") —
   do not use a power-limit service.
 - Do not cap below 2.8GHz; throughput starts to drop noticeably around 2.15GHz.
+
+## Thermal safety watchdog (clean poweroff at 95°C)
+
+The GB10's EC **hard power-cuts** (log-less) when the SoC/acpitz package zone
+crosses ~96°C — the node just goes dark with no journal entry. To protect
+against that, `gx10-thermal-watch` monitors the hottest ACPI zone and, on a
+sustained 95°C trip, issues a **clean** `systemctl poweroff` (and powers off a
+designated cluster peer first, if one is set). Zero performance impact — it
+only reads temps and only acts on an actual overheat.
+
+| File | Purpose |
+|---|---|
+| `gx10-thermal-watch.sh` | reads hottest `/sys/class/thermal/thermal_zone*/temp`; on sustained 95°C fires ordered shutdown |
+| `gx10-thermal-watch.service` | systemd unit: `THRESHOLD=95000`, `CONSECUTIVE=3`, `INTERVAL=30`, `PEER_HOST=<other rank>` |
+
+Defaults give a **90s sustained window** (30s × 3 samples) so transient spikes
+don't false-trigger, but a real sustained overheat still trips it with margin
+before the EC's ~96°C cut.
+
+Install on the **hottest node only** (the head/rank-0). Set `PEER_HOST` to the
+other cluster rank so a trip shuts both nodes down cleanly (peer first, confirm
+it's down, then this node).
+
+```bash
+sudo install -m 0755 gx10-thermal-watch.sh /usr/local/sbin/gx10-thermal-watch.sh
+sudo cp gx10-thermal-watch.service /etc/systemd/system/gx10-thermal-watch.service
+sudo systemctl daemon-reload
+sudo systemctl enable --now gx10-thermal-watch.service
+```
+
+If you want the peer powered off too, edit `PEER_HOST=` in the unit (or the
+`[Service]` env) to the other node's hostname and restart.
+
+Dry-run test (watch it report without shutting down):
+
+```bash
+sudo THRESHOLD=20000 CONSECUTIVE=1 INTERVAL=1 DRY_RUN=1 /usr/local/sbin/gx10-thermal-watch.sh
+```
+
+> **Note:** do NOT run the live (non-dry-run) watchdog with a fake-low threshold
+> or while a real trip is pending — it will genuinely power off the node(s).
+> Also the GB10 ignores `nvidia-smi -lgc` on some units, so the clock cap is
+> not a reliable cooling lever; this watchdog is the safety net.
