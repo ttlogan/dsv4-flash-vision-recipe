@@ -15,7 +15,7 @@ Internal IPs/hostnames are replaced with placeholders; no secrets are included.
 
 | Path | What it is | Source |
 |---|---|---|
-| `recipes/orcarouter-eugr-1m.yaml` | The **tuned recipe**: 1M ctx, TP=2, b12x, T3 (max-num-seqs 4, max-num-batched-tokens 8192), dspark speculative 6, fp8 KV | **Own work** (tuned from the friend's recipe) |
+| `recipes/orcarouter-eugr-1m.yaml` | The **tuned recipe**: 1M ctx, TP=2, b12x, T4 (max-num-seqs 6, max-num-batched-tokens 8192, VLLM_ENABLE_ROCE_ALLREDUCE=1), dspark speculative 6, fp8 KV | **Own work** (tuned from the friend's recipe) |
 | `mods/busy-loop-fix/` | Apply-on-launch **thermal fix**: `busy_loop_s` 1 → 0.002 in vLLM `shm_broadcast.py` (CPU spin-wait fix). See [`README`](mods/busy-loop-fix/README.md) | **Own work** |
 | `host-cpu-thermal/` | **Host-level** thermal fix: `schedutil` governor + cap X925 P-cores to 2.8GHz (systemd, persists across boot) | **Own work** |
 | `scripts/default_model_vllm.sh` | **Boot/swaap launcher**: idempotently ensure the default model is serving, refresh `/etc/motd`, `--swap` between models | **Own work** |
@@ -52,18 +52,52 @@ Internal IPs/hostnames are replaced with placeholders; no secrets are included.
 
 ## Tuning (why these values)
 
-Batched-token/seq tuning for the 305B model at 500k–1M ctx on 2× GB10:
+Batched-token/seq tuning for the 305B model at 500k–1M ctx on 2× GB10.
+
+### T4 = CURRENT WINNER (2026-10-10, supersedes T3)
+
+| Config | max-num-seqs | max-num-batched-tokens | c=1 | c=4 agg | c=6 agg | c=8 agg | max temp |
+|---|---|---|---|---|---|---|---|
+| **T4** | **6** | **8192** | **32.5 t/s** | **58.5** | **72.7** | **66.5** | 64.0 C |
+| T3 (old) | 4 | 8192 | 28.7 | 51.1 | — | 53.2 | 59.5 C |
+
+**T4 = `--max-num-seqs 6` + `VLLM_ENABLE_ROCE_ALLREDUCE=1`** (with
+`VLLM_ROCE_ALLREDUCE_MAX_SIZE=67108864` + `VLLM_ROCE_ALLGATHER_MAX_SIZE=67108864`).
+Two independent gains stacked:
+
+1. **`max-num-seqs 6`** (was 4): the documented 1M "sweet spot." Removes the concurrency
+   cap so c=6 actually runs 6 parallel streams instead of queuing. +4% c1 / +9.6% c4 /
+   +20% c8 over T3.
+2. **`VLLM_ENABLE_ROCE_ALLREDUCE=1`**: turns on the B12X **RoCEnante** one-shot RoCE RDMA
+   all-reduce for the cross-node TP=2 MoE group (was NCCL over TCP ~109 Gb/s). Verified
+   live in the log: `Using ['B12X_ROCENANTE','PYNCCL'] all-reduce backends` for the tp:0
+   group, `RoCEnante ... all-reduce is live`. It **self-disables on init failure** (falls
+   back to PYNCCL) so it cannot crash or OOM. +13.6% c1 / +14.6% c4 / +38% c6 / +25% c8
+   over T3.
+
+Combined vs the old T3 baseline: **+13.6% c1, +14.6% c4, +38% c6 (best aggregate 72.7
+tok/s), +25% c8.** Temps peak at 64 C (throttle line 85-90 C). 1M context retained
+(max_model_len 1048576 unchanged), no OOM (KV pool ~1.4M tokens hard-caps; real load
+~5% KV). This is the live default.
+
+**Holds (UNCHANGED in T4):** `max-num-batched-tokens 8192`, `max-cudagraph-capture-size 48`,
+`gpu-memory-utilization 0.85` (do NOT drop to 0.80 — it shrinks 1M concurrency the wrong
+way), `block-size 256`, `kv-cache-dtype fp8`, backend `b12x`, DSpark spec 6. The MoE
+backend is already `B12X_MXFP4_MXFP8` (no change needed); AOT compile is already fully on.
+
+### T3 = OLD WINNER (superseded by T4, kept for reference)
 
 | Config | max-num-seqs | max-num-batched-tokens | Decode (short) | Decode (long) | Acceptance |
 |---|---|---|---|---|---|
 | baseline | 8 | 4096 | ~31 t/s | — | 19.6% |
 | T1 | — | — | ~30 t/s | — | 39.2% |
-| **T3** | **4** | **8192** | **~32 t/s** | **~43 t/s** | **40.2% / 47.6%** |
+| **T3 (OLD)** | **4** | **8192** | **~32 t/s** | **~43 t/s** | **40.2% / 47.6%** |
 | 1M (T3, ctx 1048576) | 4 | 8192 | ~31 t/s | ~37 t/s | 44.6% / 38.1% |
 
-- **T3 (`max-num-seqs 4`, `max-num-batched-tokens 8192`) is the winner** and is the
-  recipe default. Lower batch (4096) raises acceptance but caps tokens/step (lowers
-  t/s); high batch + low seqs is the sweet spot.
+- **T3 (`max-num-seqs 4`, `max-num-batched-tokens 8192`) was the winner and is now
+  retitled OLD.** It is retained as the documented revert baseline. Lower batch (4096)
+  raises acceptance but caps tokens/step (lowers t/s); high batch + low seqs was the
+  sweet spot **for seqs=4** — raising seqs to 6 (T4) is now the better sweet spot.
 - **1M context is stable** and near-500k perf; the only cost is VRAM (~113-116 Gi/121 Gi
   used, ~8.5 GiB free — the OOM risk window). `max_model_len: 1048576` in the recipe.
 

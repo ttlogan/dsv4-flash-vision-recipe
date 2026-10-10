@@ -26,7 +26,7 @@ defaults:
   gpu_memory_utilization: 0.85
   max_model_len: 1048576
   block_size: 256
-  max_num_seqs: 4
+  max_num_seqs: 6
   max_num_batched_tokens: 8192
   max_cudagraph_capture_size: 48
   num_speculative_tokens: 6
@@ -45,6 +45,9 @@ env:
   VLLM_USE_B12X_SPARSE_INDEXER: "1"
   VLLM_USE_V2_MODEL_RUNNER: "1"
   VLLM_MOE_SKIP_PADDING: "0"
+  VLLM_ENABLE_ROCE_ALLREDUCE: "1"
+  VLLM_ROCE_ALLREDUCE_MAX_SIZE: "67108864"
+  VLLM_ROCE_ALLGATHER_MAX_SIZE: "67108864"
   B12X_MLA_SM120_UNIFIED: "1"
   B12X_MOE_FORCE_A8: "1"
 
