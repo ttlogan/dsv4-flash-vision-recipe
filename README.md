@@ -80,6 +80,18 @@ tok/s), +25% c8.** Temps peak at 64 C (throttle line 85-90 C). 1M context retain
 (max_model_len 1048576 unchanged), no OOM (KV pool ~1.4M tokens hard-caps; real load
 ~5% KV). This is the live default.
 
+**RE-VALIDATED on kernel 6.17.0-1032-nvidia (2026-10-10) — tuning UNCHANGED and still
+the winner.** The cluster was rolled back from 7.0.0-1019-nvidia (the NVIDIA-advisory
+kernel) to 6.17.0-1032-nvidia. On 6.17 the **exact same T4 recipe/env** measured
+**c=1 34.0, c=4 60.7, c=6 80.2, c=8 73.8** (max temp 64 C) — **equal or better than 7.0**,
+best aggregate 80.2. c=12 pressure test ran clean (77.7 agg) with **no NCCL ENOMEM/OOM**
+(6.17 sustains ~110 GB/rank; 7.0 broke at ~90 GB). **One concession:** the `B12X_ROCENANTE`
+one-shot RoCE all-reduce does **not** connect on 6.17 (`ibv_modify_qp(RTR): No data
+available`) so it **falls back to PYNCCL** (`Using ['PYNCCL'] all-reduce backends`). This
+does **not** hurt throughput (see the equal-or-better numbers) — the NCCL multi-node rings
+still work, and the fallback is the designed safety net. The 6.17 win is **memory/load
+stability** (no NCCL/RoCE break at high concurrency), not more throughput.
+
 **Holds (UNCHANGED in T4):** `max-num-batched-tokens 8192`, `max-cudagraph-capture-size 48`,
 `gpu-memory-utilization 0.85` (do NOT drop to 0.80 — it shrinks 1M concurrency the wrong
 way), `block-size 256`, `kv-cache-dtype fp8`, backend `b12x`, DSpark spec 6. The MoE
