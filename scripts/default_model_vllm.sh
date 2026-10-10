@@ -148,6 +148,21 @@ case "${1:-}" in
     ;;
 esac
 
+# Stop the recipe container on both nodes. The ensure path MUST do this before
+# launching: if a previous attempt left b12x-vllm-node running (but the model
+# never reached health=200, e.g. the cold-boot rendezvous race), launcher's
+# check_cluster_running() would see the container up, skip exec_no_ray_cluster,
+# and never dispatch vllm serve again - so a systemd Restart=on-failure would
+# spin forever without ever bringing the model up. Removing the container (and
+# its orphaned worker vllm serve procs) forces a clean recreate + dispatch every
+# time. Settings/tunings come from the recipe yaml + env, NOT container state.
+stop_recipe_stack() {
+  echo "==> stopping recipe stack (b12x-vllm-node) on head + worker"
+  sudo -u "$RUNTIME_USER" podman rm -f b12x-vllm-node 2>/dev/null || true
+  sudo -u "$RUNTIME_USER" ssh -o BatchMode=yes -o ConnectTimeout=10 "$RAPH" \
+    'podman rm -f b12x-vllm-node 2>/dev/null || true' 2>/dev/null || true
+}
+
 # ---------- ensure default model ----------
 if service_up; then
   if model_serving "$DEFAULT_MODEL"; then
@@ -157,6 +172,12 @@ if service_up; then
   fi
   log "a model is serving but not the default ($DEFAULT_MODEL). Launching default."
 fi
+
+# Always clean the stale recipe stack before launching so start_cluster() sees a
+# fresh slate and dispatches vllm serve (see stop_recipe_stack comment). Idempotent
+# if already clean; prevents the orphan-accumulation / never-re-dispatch races.
+log "preparing clean launch: stopping any stale b12x-vllm-node container"
+stop_recipe_stack
 
 log "launching default model '$DEFAULT_MODEL' via run-recipe.py -d"
 log "  recipe: $RECIPE"
