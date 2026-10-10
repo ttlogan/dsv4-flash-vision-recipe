@@ -189,7 +189,11 @@ sudo -u "$RUNTIME_USER" "$LAUNCHER" "$RECIPE" -d   # -d = daemon (persists acros
 log "waiting for /health on head :8000 (model load ~5-7 min)..."
 for i in $(seq 1 60); do
   sleep 10
-  c=$(curl -s -o /dev/null -w '%{http_code}' "$HEALTH_URL" 2>/dev/null)
+  # curl exits 7 (connection refused) during cold-load before vLLM binds :8000.
+  # Under `set -euo pipefail` that would kill the launcher (status=7) and trigger
+  # a spurious systemd Restart=on-failure every ~10s. Guard it so a not-yet-up
+  # :8000 just reports 000 and keeps polling.
+  c=$(curl -s -o /dev/null -w '%{http_code}' "$HEALTH_URL" 2>/dev/null) || c=000
   [ "$c" = "200" ] && { log "READY after ~$((i*10))s."; break; }
   [ $((i % 6)) -eq 0 ] && log "  still loading ($((i*10))s)..."
 done
