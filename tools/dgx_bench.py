@@ -69,13 +69,82 @@ def run_concurrency(c, reps, warmup_secs=8):
         "temps_after": temps_after,
     }
 
+def run_soak(c, duration_secs, max_tokens=128, sample_interval=10):
+    """Sustained load for duration_secs at concurrency c (short max_tokens, ~rufus's 88.8 tok/s run).
+    Dispatches continuously; samples SoC temp every sample_interval. Returns agg tok/s + temp series."""
+    import threading
+    start = time.time()
+    stop_at = start + duration_secs
+    temps = []   # (t_off, max_c)
+    completed = []  # resp dicts
+    lock = threading.Lock()
+
+    def sampler():
+        while time.time() < stop_at:
+            t = load_temps()
+            with lock:
+                temps.append((round(time.time() - start, 1), t.get("max_c")))
+            time.sleep(sample_interval)
+
+    def driver():
+        # keep a pool of c in-flight requests until the window elapses
+        with concurrent.futures.ThreadPoolExecutor(max_workers=c) as ex:
+            futs = set()
+            while time.time() < stop_at:
+                # top up to c in-flight
+                futs = {f for f in futs if not f.done()}
+                while len(futs) < c and time.time() < stop_at:
+                    futs.add(ex.submit(one_call, max_tokens=max_tokens))
+                done, _ = concurrent.futures.wait(futs, timeout=1.0,
+                                                  return_when=concurrent.futures.FIRST_COMPLETED)
+                for f in done:
+                    try:
+                        completed.append(f.result())
+                    except Exception:
+                        pass
+                    futs.discard(f)
+
+    st = threading.Thread(target=sampler, daemon=True)
+    dv = threading.Thread(target=driver, daemon=True)
+    st.start(); dv.start()
+    dv.join()
+    wall = time.time() - start
+    total_tok = sum(r["completion_tokens"] for r in completed)
+    aggr = total_tok / wall if wall else 0
+    temp_series = [t for t in temps if t[1] is not None]
+    return {
+        "mode": "soak",
+        "concurrency": c,
+        "duration_s": round(wall, 1),
+        "requests": len(completed),
+        "total_tokens": total_tok,
+        "aggregate_tps": round(aggr, 2),
+        "temp_series": [(round(a, 1), b) for a, b in temp_series],
+        "temp_max": round(max((b for _, b in temp_series), default=0), 1),
+        "temp_steady_hi": round(max((b for _, b in temp_series[-5:]), default=0), 1) if temp_series else None,
+    }
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--out", required=True)
     ap.add_argument("--label", default="baseline")
     ap.add_argument("--concs", default="1,4,8")
     ap.add_argument("--reps", type=int, default=1)
+    ap.add_argument("--soak", action="store_true", help="sustained soak at 12 concurrent, 128-token")
+    ap.add_argument("--soak-secs", type=int, default=600)
     args = ap.parse_args()
+    if args.soak:
+        r = run_soak(12, args.soak_secs)
+        results = {"label": args.label, "timestamp": time.strftime("%Y-%m-%d %H:%M:%S"),
+                   "model": MODEL, "mode": "soak", "run": r}
+        with open(args.out, "w") as f:
+            json.dump(results, f, indent=2)
+        print(f"SOAK c=12 for {args.soak_secs}s: agg={r['aggregate_tps']} tok/s, "
+              f"reqs={r['requests']}, temp_max={r['temp_max']}C, "
+              f"steady_hi={r['temp_steady_hi']}C")
+        print(f"WROTE {args.out}")
+        return
     concs = [int(x) for x in args.concs.split(",")]
     results = {"label": args.label, "timestamp": time.strftime("%Y-%m-%d %H:%M:%S"),
                "model": MODEL, "prompt_chars": len(PROMPT), "runs": []}
