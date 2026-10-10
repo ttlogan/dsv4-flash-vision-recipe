@@ -26,6 +26,19 @@ env shows the exact T4 set: `max_num_seqs 6`, `max_num_batched_tokens 8192`,
 `gpu_memory_utilization 0.85`, `max_cudagraph_capture_size 48`, `moe_backend b12x`,
 `load_format b12x`, DSpark spec-decode 6, `Using 'B12X_MXFP4_MXFP8'`.
 
+## Boot process HARDENED (2026-10-10)
+`dgx-model.service` changed `Type=oneshot` → **`Type=simple`** and added
+**`Restart=on-failure` + `RestartSec=60`** (backup `.bak-20261010`). Why:
+- `oneshot` treats the launcher as "done" the moment `default_model_vllm.sh` returns, so a
+  transient cold-boot engine-core init failure left the unit stuck in `failed` even though the
+  container self-healed.
+- `Type=simple` makes the launcher's blocking `/health` poll a "running" service;
+  `Restart=on-failure` retries it (60s later) if it exits non-zero. `default_model_vllm.sh`
+  is **idempotent** (skips if the model is already serving), so a retry is safe.
+- Verified: `systemd-analyze verify` clean; with the model up the unit exits `success`,
+  `NRestarts=0`. The launcher's poll-loop `[ $((i % 6)) -eq 0 ] && log` is safe under
+  `set -e` (the `&&` protects it) — the premature exit was the transient engine-core init.
+
 ## Benchmark on 6.17.0-1032 (T4 recipe unchanged)
 | c | agg tok/s | max temp |
 |---|---|---|
