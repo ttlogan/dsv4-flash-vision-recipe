@@ -21,7 +21,7 @@ set -euo pipefail
 DEFAULT_MODEL=deepseek
 RUNTIME_USER="${RUNTIME_USER:-vllm}"   # user that owns the rootless podman containers
 RECIPE_ROOT=/opt/vllm-recipe
-RECIPE="$RECIPE_ROOT/recipes/orcarouter-eugr-1m.yaml"   # live recipe (1M ctx, T3, b12x)
+RECIPE="$RECIPE_ROOT/recipes/orcarouter-eugr-1m.yaml"   # live recipe (1M ctx, T4, b12x)
 LAUNCHER="$RECIPE_ROOT/.build/spark-vllm-docker/run-recipe.py"
 LEO="<HEAD_IP>"             # head node (set to your head node IP)
 RAPH="<WORKER_IP>"          # worker node (set to your worker node IP)
@@ -38,7 +38,7 @@ write_motd() {
   local m="$1"
   local broad
   case "$m" in
-    deepseek) broad="DeepSeek-V4-Flash-Vision-Uncensored (b12x, 1M ctx, T3 tuning)" ;;
+    deepseek) broad="DeepSeek-V4-Flash-Vision-Uncensored (b12x, 1M ctx, T4 tuning)" ;;
     *)        broad="$m" ;;
   esac
   sudo tee /etc/motd >/dev/null <<EOF
