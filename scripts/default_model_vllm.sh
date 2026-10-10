@@ -2,7 +2,8 @@
 # default_model_vllm.sh — TURNKEY: bring up (or ensure) the default vLLM model on
 # the 2-node GX10 cluster, optionally swap models, and refresh the head node's /etc/motd.
 #
-# This REPLACES launch-model.sh. It drives the podman-aware run-recipe.py launcher
+# This is the DEEPSEEK default launcher (uses the recipe stack). It drives the
+# podman-aware run-recipe.py launcher
 # (relocated to /opt/vllm-recipe, NOT /tmp) so it survives reboots.
 #
 # DEFAULT_MODEL is defined here. It is currently deepseek; change it by editing
@@ -56,16 +57,21 @@ write_motd() {
     https://<head-host>/ups/       -> UPS web UI
 
   Stack management (on this host):
-    default_model_vllm.sh            # ensure default model is serving + motd
+    default_model_vllm.sh            # ensure default (deepseek) is serving + motd
     default_model_vllm.sh --health   # report serving status / health
-    default_model_vllm.sh --swap <m> # swap model + relaunch (HEAD-first)
-    podman ps --filter name=vllm_node  # serving containers (head/worker)
+    default_model_vllm.sh --swap deepseek   # (re)launch deepseek recipe stack (HEAD-first)
+    podman ps --filter name=b12x-vllm-node  # serving containers (head/worker)
+
+  NOTE — GLM-5.3 is a SEPARATE stack, NOT this recipe. It uses the vllm_glm53
+  container + launch-glm.sh (different image/tuning) and has NOT been re-tested
+  on kernel 6.17.0-1032. Do NOT use it unless you intend to run GLM.
+  Qwen is untested on this cluster.
 
   Active default model: $broad
   Model swap / launcher lives at /opt/vllm-recipe (persists across reboots).
 
   NUT / UPS:  sudo upsc cyberpower@localhost | head
-  Models:     /models (DeepSeek, Qwen, GLM)
+  Models:     /models (DeepSeek, GLM)
   Thermal:    nvidia-smi --query-gpu=temperature.gpu  (GPU); board zone = max /sys/class/thermal/thermal_zone*/temp
 
 EOF
@@ -111,13 +117,13 @@ if [ "${1:-}" = "--health" ]; then
   exit 0
 fi
 
-# ---------- --swap <qwen|glm|deepseek> ----------
+# ---------- --swap <deepseek|glm> ----------
 SWAP_TARGET=""
 case "${1:-}" in
   --swap)
     SWAP_TARGET="${2:-}"
     # Stop the recipe stack's container on both nodes (it owns :8000) so the swap
-    # stack can reuse the port. launch-model.sh also stops its own vllm_glm53.
+    # stack can reuse the port. launch-glm.sh also stops its own vllm_glm53.
     echo "==> stopping recipe stack (b12x-vllm-node) on head + worker"
     sudo -u "$RUNTIME_USER" podman rm -f b12x-vllm-node 2>/dev/null || true
     sudo -u "$RUNTIME_USER" ssh -o BatchMode=yes -o ConnectTimeout=10 "$RAPH" \
@@ -127,15 +133,16 @@ case "${1:-}" in
       deepseek)
         log "swapping to default ($SWAP_TARGET) via recipe stack"
         ;; # fall through to the recipe launch below
-      qwen|glm)
-        log "swapping to '$SWAP_TARGET' via launch-model.sh (glm53-vllm stack)"
-        sudo -u "$RUNTIME_USER" launch-model.sh   # GLM/Qwen swap stack (see README) "$SWAP_TARGET"
+      glm)
+        log "swapping to GLM via launch-glm.sh (SEPARATE vllm_glm53 stack, NOT the deepseek recipe)"
+        log "NOTE: GLM has NOT been re-tested on kernel 6.17.0-1032"
+        sudo -u "$RUNTIME_USER" launch-glm.sh   # GLM-only stack (see README)
         write_motd "$SWAP_TARGET"
         log "done. Swapped to $SWAP_TARGET (served-name dgx_hobo_default)."
         exit 0
         ;;
       *)
-        die "unknown swap target '$SWAP_TARGET' (use qwen|glm|deepseek)"
+        die "unknown swap target '$SWAP_TARGET' (use deepseek or glm; qwen is untested)"
         ;;
     esac
     ;;
