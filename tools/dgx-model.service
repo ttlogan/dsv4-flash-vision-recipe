@@ -1,0 +1,23 @@
+[Unit]
+Description=Bring up the default vLLM model on the GX10 2-node cluster (leo:8000)
+# network up + the container runtime reachable. wfoster has Linger=yes, so the
+# rootless podman user session starts at boot; wait for it before launching.
+After=network.target systemd-user-sessions.service
+Wants=network.target
+
+[Service]
+# HARDENED 2026-10-10: Type=oneshot -> simple so systemd treats the launcher's
+# blocking /health poll as "running" and DOESN'T report the unit as done/failed
+# before the model is actually up. Restart=on-failure: a transient engine-core
+# init failure (cold-boot race) exits non-zero -> systemd retries after 60s.
+# default_model_vllm.sh is idempotent (skips if already serving), so a retry is safe.
+Type=simple
+ExecStartPre=/bin/sleep 30
+ExecStart=/usr/local/bin/default_model_vllm.sh
+TimeoutStartSec=1200
+Restart=on-failure
+RestartSec=60
+User=root
+
+[Install]
+WantedBy=multi-user.target
